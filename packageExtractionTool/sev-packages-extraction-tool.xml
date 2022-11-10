@@ -1,0 +1,478 @@
+<package buildNumber="9343" buildVersion="6.7" img="xtk:specfile.png" label="Packages" name="packages" namespace="cmaf" vendor="">
+  <entities schema="xtk:navtree">
+    <navtree entitySchema="xtk:navtree" img="nl:folders.png" label="package" name="package" namespace="cmaf">
+      <model name="root">
+        <model name="parameters">
+          <nodeModel name="xtkSpecFile">
+            <command desc="Extraire et séparer une sélection de packages" form="cmaf:splitSelectedPackages" formKeyPath="job/userArgs/specFiles" img="xtk:miniatures/mini-export.png" label="Séparer les packages sélectionnés..." name="SplitSelectedPackages" newEntitySchema="xtk:job" nonPersistJob="true" notVisibleInForm="true" rights="write"/>
+          </nodeModel>
+        </model>
+      </model>
+    </navtree>
+    <navtree entitySchema="xtk:navtree" img="nl:folders.png" label="sourceFiles" name="sourceFiles" namespace="cmaf">
+      <model name="root">
+        <model name="cmaf">
+          <nodeModel img="xtk:textfile.png" label="Source Files" name="sources">
+            <view name="sources" schema="cmaf:source" type="listdet">
+              <columns>
+                <node xpath="@name"/>
+                <node xpath="@type"/>
+                <node xpath="packages"/>
+              </columns>
+            </view>
+          </nodeModel>
+        </model>
+      </model>
+    </navtree>
+  </entities>
+  <entities schema="xtk:srcSchema">
+    <srcSchema entitySchema="xtk:srcSchema" img="xtk:textfile.png" label="Package Source File Contents" labelSingular="Package Source File Content" name="packageSourceRel" namespace="cmaf" xtkschema="xtk:srcSchema">
+      <element img="xtk:textfile.png" label="Package Source File Contents" labelSingular="Package Source File Content" name="packageSourceRel">
+        <key name="rel">
+          <keyfield xlink="package"/>
+          <keyfield xlink="source"/>
+        </key>
+        <element name="package" revLabel="Sources" revLink="sources" target="xtk:specFile" type="link"/>
+        <element name="source" revLabel="Packages" revLink="packages" target="cmaf:source" type="link"/>
+      </element>
+    </srcSchema>
+    <srcSchema entitySchema="xtk:srcSchema" img="xtk:textfile.png" label="Source files" labelSingular="Source file" name="source" namespace="cmaf" xtkschema="xtk:srcSchema">
+      <element img="xtk:textfile.png" label="Sources" name="source">
+        <key name="unique">
+          <keyfield xpath="@name"/>
+          <keyfield xpath="@type"/>
+        </key>
+        <attribute length="120" name="name" type="string"/>
+        <attribute length="20" name="type" type="string"/>
+        <attribute name="extractionDate" type="datetime"/>
+      </element>
+    </srcSchema>
+    <srcSchema desc="Définition du contenu d'un package" entitySchema="xtk:srcSchema" extendedSchema="xtk:specFile" img="xtk:specfile.png" label="Définitions de packages - Méthodes" labelSingular="Définition de package" name="specFileMethods" namespace="cmaf" xtkschema="xtk:srcSchema">
+      <methods async="true">
+        <method library="cmaf:splitPackage.js" name="SplitSelectedPackages" static="true">
+          <parameters>
+            <param desc="Condition de filtrage définissant les packages à extraire" inout="in" name="specFileFilter" type="DOMElement"/>
+          </parameters>
+        </method>
+        <method library="cmaf:splitPackage.js" name="GetArchiveName" static="true">
+          <parameters>
+            <param desc="Nom du fichier .zip contenant les sources" inout="out" name="name" type="string"/>
+          </parameters>
+        </method>
+      </methods>
+    </srcSchema>
+  </entities>
+  <entities schema="xtk:javascript">
+    <javascript entitySchema="xtk:javascript" img="xtk:javascript.png" label="packageTools.js" name="packageTools.js" namespace="cmaf">
+      <data>//--------------------------------------------------------------------------------
+// Fonctions pour gestion des packages
+// Par GLR, pour CMAF, Adobe 2021
+//--------------------------------------------------------------------------------
+
+
+//--------------------------------------------------------------------------------
+// format package for storage into source control
+// Remove last execution date in workfklows
+//--------------------------------------------------------------------------------
+function cmaf_formatPackage(package) {
+
+  // Forms : &lt;patch&gt; are replaced by &lt;form&gt;
+  for each (var patch in package..patch) {
+    var schema = patch.@schema.toString();
+    var namens = patch.@id.toString();
+    var ns = namens.split(":")[0];
+    var name = namens.split(":")[1];
+    var form = undefined;
+    switch(schema) {
+      case "xtk:form" : form = cmaf_loadForm(name, ns); break;
+    }
+    var entities = &lt;entities schema={schema}&gt;{form}&lt;/entities&gt;;
+    package.appendChild(entities);
+  }
+
+  delete package..patch;
+
+  // Folders, operators : &lt;rights&gt; are removed
+  delete package..rights;
+
+  // Workflows : processing dates are removed
+  delete package..@processDate;
+
+  // Options : option values are removed
+  delete package..@stringValue;
+  delete package..@dateValue;
+
+  // Ext accounts : remove credentials and URLs
+  delete package..@server;
+  delete package..@account;
+  delete package..@password;
+  delete package..@connectorUrl;
+  
+  // Packages : remove author and build date
+  delete package..@author;
+  delete package..@buildDate;
+  
+  // Forms : remove md5 calculation
+  delete package..@md5;
+
+  // ALL : remove internal ID
+  delete package..@internalId;
+
+  return package;
+}
+
+
+
+//--------------------------------------------------------------------------------
+// load form and return contents
+//--------------------------------------------------------------------------------
+function cmaf_loadForm(name, ns) {
+
+  var query = xtk.queryDef.create(
+  &lt;queryDef schema="xtk:form" operation="get"&gt;
+    &lt;select&gt;
+      &lt;node expr="data"/&gt;
+    &lt;/select&gt;
+    &lt;where&gt;
+      &lt;condition expr={"@name = '" + name + "'"}/&gt;
+      &lt;condition expr={"@namespace = '" + ns + "'"}/&gt;
+    &lt;/where&gt;
+  &lt;/queryDef&gt;
+  )
+
+  var form = query.ExecuteQuery();
+
+  return form;  
+}</data>
+    </javascript>
+    <javascript entitySchema="xtk:javascript" img="xtk:javascript.png" label="splitPackage.js" name="splitPackage.js" namespace="cmaf">
+      <data>//--------------------------------------------------------------------------------
+// Extraction des fichiers source d'un package dans un zip
+// Par GLR, pour CMAF, Adobe 2021
+//--------------------------------------------------------------------------------
+
+loadLibrary("cmaf:packageTools.js");
+
+
+//--------------------------------------------------------------------------------
+// Point d'entrée de la méthode SOAP cmaf:specFile:SplitSelectedPackages
+// Extrait la sélection de packages, sépare les fichiers source, et crée un fichier .zip téléchargeable
+// @param specFileFilter(XML) : sélection de packages à extraire (depuis le client)
+//--------------------------------------------------------------------------------
+function xtk_specFile_SplitSelectedPackages(specFileFilter) {
+  logInfo("Extraction des packages " + specFileFilter.@namespace + "_" + specFileFilter.@name);
+
+  var query = xtk.queryDef.create(
+  &lt;queryDef schema="xtk:specFile" operation="select"&gt;
+    &lt;select&gt;
+      &lt;node expr="@name"/&gt;
+      &lt;node expr="@namespace"/&gt;
+      &lt;node expr="data"/&gt;
+    &lt;/select&gt;
+    {specFileFilter}
+  &lt;/queryDef&gt;
+  )
+
+  var res = query.ExecuteQuery();
+
+  var zipFileName = "package_" + specFileFilter.@namespace + "_" + specFileFilter.@name; // this naming is expected by the form to download file
+  logInfo("generating file : " + zipFileName);
+  var zipFile = new ZipFile(application.instanceVarDir + "/upload/" + zipFileName + ".xml");
+  
+  var count = 0;
+  for each (var xmlSpecFile in res.specFile) {
+    logInfo("extracting package " + xmlSpecFile.@name);
+    var specFile = xtk.specFile.create(xmlSpecFile);
+    var package = specFile.GenerateDoc();
+    package = cmaf_formatPackage(package);
+    cmaf_cleanupSourceForPackage(package);
+    for each (var entities in package.entities) {
+      for each (var entity in entities.children()) {
+        var entityPath = cmaf_addEntityToZipFile(entity, zipFile);
+        cmaf_saveSource(entityPath, package);
+        count++;
+      }
+    }
+    cmaf_addPackageToZipFile(package, zipFile);
+  }    
+
+  zipFile.save();
+  logInfo("Séparé " + count + " fichiers source dans " + specFileFilter.@namespace + "_" + specFileFilter.@name + ".zip");
+}
+
+
+//--------------------------------------------------------------------------------
+// add an entity into a zip file
+// directory structure is : &lt;sourcesDir&gt;/&lt;namespace&gt;/&lt;schema&gt;/&lt;name&gt;.&lt;ext&gt;
+// sourcesDir : base directory : sources
+// namespace : namespace of entity type
+// schema : type of entity
+// name : name of entity
+// ext : file extension, either .xml or .js or .jssp
+// 
+//--------------------------------------------------------------------------------
+function cmaf_addEntityToZipFile(entity, zipFile) {
+ 
+  var entitySchema = entity.parent().@schema;
+  var entityName = entity.@name != undefined ? entity.@name : entity.@internalName;
+  if (entity.@namespace != undefined) {
+    entityName = entity.@namespace + "_" + entity.@name;  
+  }
+
+  var schemaNamespace = entitySchema.split(":")[0];
+  var schemaName = entitySchema.split(":")[1];
+
+  if (entitySchema == "xtk:operator") {
+    switch(parseInt(entity.@type)) {
+      case 0 : schemaName = "operator"; break;
+      case 1 : schemaName = "operatorGroup"; break;
+      case 2 : schemaName = "namedRight"; break;
+    }
+  }
+
+  var baseDir = "sources";
+  var packageName = entity.parent().parent().@name
+  var filePath = baseDir + "/" + packageName + "/" + schemaName + "/" + entityName;
+  var buffer = new MemoryBuffer();
+  if (entity.name() == "jssp" || entity.name() == "javascript") {
+    if (entity.name() == "javascript") {
+      filePath = filePath.replace(".js", ".jsx"); // replace .js extension to .jsx to avoid being blocked in email attachments
+    }
+    buffer.fromString(entity.data.toString());
+    zipFile.setEntry(filePath, buffer);
+  } else {
+    buffer.fromString(entity.toXMLString());
+    filePath += ".xml";
+    zipFile.setEntry(filePath, buffer);
+  }
+  buffer.dispose();
+  return filePath;
+}
+
+
+//--------------------------------------------------------------------------------
+// add a whole package to a zip file
+// package file name is &lt;ns&gt;-&lt;name&gt;.xml
+// base directory is "packages"
+//--------------------------------------------------------------------------------
+function cmaf_addPackageToZipFile (package, zipFile){
+  var packageFilePath = "packages/" + package.@namespace + "-" + package.@name + ".xml";
+  var buffer = new MemoryBuffer();
+  buffer.fromString(package.toXMLString());
+  zipFile.setEntry(packageFilePath, buffer);
+}
+
+
+//--------------------------------------------------------------------------------
+// save source in the database, and attach it to the package
+// @param entityPath(string) : source file name and type
+// @param package(XML) : package to attach to 
+//--------------------------------------------------------------------------------
+function cmaf_saveSource(entityPath, package) {
+  var sourceType = entityPath.split("/")[2];
+  var sourceName = entityPath.split("/")[3].split(".")[0];
+  xtk.session.Write(
+    &lt;source xtkschema="cmaf:source" name={sourceName} type={sourceType} extractionDate={getCurrentDate().toISOString()}&gt;
+      &lt;packages package-name={package.@name} package-namespace={package.@namespace}/&gt;
+    &lt;/source&gt;
+  )
+}
+
+//--------------------------------------------------------------------------------
+// remove sources in the database that are attached to the package
+// @param package(XML) : package to attach to 
+//--------------------------------------------------------------------------------
+function cmaf_cleanupSourceForPackage(package) {
+  //sqlExec("delete from CmafSource inner join CmafPackageSourceRel on CmafPackageSourceRel.sSourceName = CmafPackageSourceRel.sName AND CmafPackageSourceRel.sSourceType = CmafPackageSourceRel.sType AND CmafPackageSourceRel.sPackageName = $(sz) AND CmafPackageSourceRel.sPackageNameSpace = $(sz)", package.@name, package.@namespace);
+  sqlExec("delete from CmafPackageSourceRel where sPackageName = $(sz) and sPackageNameSpace = $(sz)", package.@name, package.@namespace);
+}
+
+
+//--------------------------------------------------------------------------------
+// Point d'entrée de la méthode SOAP cmaf:specFile:GetArchiveName
+// Nom du fichier .zip qui contient les packages extraits
+// @return name (string)
+//--------------------------------------------------------------------------------
+function xtk_specFile_GetArchiveName() {
+  return application.instanceName + "_" + getCurrentDate().toISOString();
+}</data>
+    </javascript>
+  </entities>
+  <entities schema="xtk:form">
+    <form entitySchema="xtk:form" img="xtk:form.png" label="source files" name="source" namespace="cmaf" xtkschema="xtk:form">
+      <input xpath="@name"/>
+      <input xpath="@type"/>
+      <input xpath="@extractionDate"/>
+      <container codepage="1252" img="xtk:installedPackage.png" label="Packages" name="packages">
+        <input nolabel="true" refresh="true" toolbarCaption="Packages" type="linklist" xpath="packages" xpathChoiceTarget="package" xpathEditTarget="sourpackagece" zoom="true">
+          <input xpath="package/@name"/>
+        </input>
+      </container>
+    </form>
+    <form _created="2021-08-30 14:05:51.398Z" _createdBy-id="1055" _lastModified="2021-08-30 14:10:10.369Z" _modifiedBy-id="1055" entitySchema="xtk:form" img="xtk:form.png" label="Souces dans packages" name="specFileSources" namespace="cmaf" xtkschema="xtk:form">
+      <container codepage="1252" name="lib">
+        <container codepage="1252" img="xtk:textfile.png" label="Sources" name="sourcesTab">
+          <input hideEditButtons="true" nolabel="true" refresh="true" toolbarCaption="Fichiers source" type="linklist" xpath="sources" xpathChoiceTarget="source" xpathEditTarget="source" zoom="true">
+            <input xpath="source/@name"/>
+            <input xpath="source/@type"/>
+          </input>
+        </container>
+      </container>
+    </form>
+    <form _created="2021-08-04 11:09:32.364Z" _createdBy-id="1055" _lastModified="2021-08-04 11:09:32.363Z" _modifiedBy-id="1055" entity-schema="xtk:specFile" entitySchema="xtk:form" img="xtk:form.png" label="Extraire et séparer les packages" name="splitSelectedPackages" namespace="cmaf" nothingToEdit="true" nothingToSave="true" xpathsToLoad="*,definition/**" xtkschema="xtk:form">
+      <enter>
+        <soapCall name="GetArchiveName" service="xtk:specFile">
+          <param type="string" xpathOut="@name"/>
+        </soapCall>
+        <set value="true" xpath="@doNotPersist"/>
+        <set expr="'cmaf'" xpath="@namespace"/>
+        <set expr="@namespace" xpath="/job/userArgs/specFiles/where/@namespace"/>
+        <set expr="@name" xpath="/job/userArgs/specFiles/where/@name"/>
+        <set expr="'sources_' + @namespace + '_' + @name + '.zip'" xpath="/tmp/@filename"/>
+      </enter>
+      <value label="Package" xpath="@label"/>
+      <input dlgType="save" label="Fichier" type="fileedit" xpath="/tmp/@filename"/>
+      <container codepage="1252" name="generate" refreshPeriod="500" type="packageGenerator" xpathDestName="/tmp/@filename" xpathProperties="/properties">
+        <soapCall name="SplitSelectedPackages" service="xtk:specFile">
+          <param type="DOMElement" xpath="/job/userArgs/specFiles/where"/>
+        </soapCall>
+        <input name="JobLogsList" type="JobLogList"/>
+        <container codepage="1252" colcount="2">
+          <value dataType="timespan" label="Ecoulé" xpath="/tmp/timing/@elapsed"/>
+          <value dataType="timespan" label="Restant estimé" xpath="/tmp/timing/@remaining"/>
+        </container>
+        <container codepage="1252" colcount="2">
+          <value name="JobProgressBar" type="ProgressBar" valign="center" xpathCur="/properties/progress/@current" xpathElapsed="/tmp/timing/@elapsed" xpathMax="/properties/progress/@max" xpathRemaining="/tmp/timing/@remaining"/>
+          <container codepage="1252" enabledIf="[/tmp/@filename] != ''" type="enabledGroup">
+            <input label="&amp;Démarrer" name="JobSubmitButton" type="flatbutton"/>
+          </container>
+        </container>
+      </container>
+    </form>
+  </entities>
+
+  <entities schema="xtk:queryFilter">
+    <queryFilter hasForm="1" label="Par package" name="cmafSourceByPackage" schema="cmaf:source">
+      <where filteringSchema="cmaf:source">
+        <condition boolOperator="AND" expr="packages" setOperator="EXISTS">
+          <condition enabledIf="$(/tmp/@package) != ''" expr="[@package-name] LIKE '%' + $(/tmp/@package) + '%'"/>
+        </condition>
+        <condition boolOperator="AND" enabledIf="$(/tmp/@name) != ''" expr="@name LIKE '%' + $(/tmp/@name) + '%'"/>
+        <condition boolOperator="AND" enabledIf="$(/tmp/@type) != ''" expr="@type LIKE '%' + $(/tmp/@type) + '%'"/>
+      </where>
+      <form>
+        <container colcount="3">
+          <input label="Nom" noTransaction="true" xpath="/tmp/@name"/>
+          <input label="Type" noTransaction="true" xpath="/tmp/@type"/>
+          <input label="Package" noTransaction="true" xpath="/tmp/@package"/>
+        </container>
+      </form>
+      <folder _operation="none" name="xtkQueryFilter"/>
+    </queryFilter>
+    <queryFilter hasForm="1" label="Par package EXCLUSIF" name="cmafSourceByPackageExclusive" schema="cmaf:source">
+      <where filteringSchema="cmaf:source">
+        <condition boolOperator="AND" expr="packages" setOperator="EXISTS">
+          <condition enabledIf="$(/tmp/@package) != ''" expr="[@package-name] LIKE '%' + $(/tmp/@package) + '%'"/>
+        </condition>
+        <condition boolOperator="AND" expr="packages" setOperator="NOT EXISTS">
+          <condition enabledIf="$(/tmp/@package) != ''" expr="[@package-name] NOT LIKE '%' + $(/tmp/@package) + '%'"/>
+        </condition>
+      </where>
+      <form>
+        <container colcount="3">
+          <input label="Package Exclusif" noTransaction="true" xpath="/tmp/@package"/>
+        </container>
+      </form>
+      <folder _operation="none" name="xtkQueryFilter"/>
+    </queryFilter>
+    <queryFilter hasForm="1" label="Dans plusieurs packages" name="cmafSourceManyPackages" schema="cmaf:source">
+      <where filteringSchema="cmaf:source">
+        <condition expr="packages > 2" setOperator="COUNT"/>
+      </where>
+      <form>
+        <container colcount="3">
+          <input label="Nom" noTransaction="true" xpath="/tmp/@name"/>
+          <input label="Type" noTransaction="true" xpath="/tmp/@type"/>
+          <input label="Package" noTransaction="true" xpath="/tmp/@package"/>
+        </container>
+      </form>
+      <folder _operation="none" name="xtkQueryFilter"/>
+    </queryFilter>
+  </entities>
+  <entities schema="xtk:folder">
+    <folder entity="xtk:folder" image-name="textfile.png" image-namespace="xtk" label="Gestion des sources" model="sources" name="cmafSourceFiles" order="5" schema="cmaf:source">
+      <parent _operation="none" name="xtkPackageManagement"/>
+      <where filteringSchema="cmaf:source"/>
+    </folder>
+  </entities>
+  <entities schema="xtk:navtree">
+    <navtree entitySchema="xtk:navtree" img="nl:folders.png" label="sourceFiles" name="sourceFiles" namespace="cmaf">
+      <model name="root">
+        <model name="cmaf">
+          <nodeModel img="xtk:textfile.png" label="Source Files" name="sources">
+            <view name="sources" schema="cmaf:source" type="listdet">
+              <columns>
+                <node xpath="@name"/>
+                <node xpath="@type"/>
+                <node xpath="packages"/>
+              </columns>
+            </view>
+          </nodeModel>
+        </model>
+      </model>
+    </navtree>
+  </entities>
+  <entities schema="xtk:sql">
+    <sql entitySchema="xtk:sql" img="xtk:sql.png" label="purgeSrcRel.sql" name="purgeSrcRel.sql" namespace="cmaf">
+      <data>delete from cmafPackageSourceRel;</data>
+    </sql>
+  </entities>
+  <entities schema="xtk:specFile">
+    <specFile img="xtk:specfile.png" includeDefaultValues="false" includeInstallScript="false" includeSpec="true" label="Packages" name="packages" namespace="cmaf" type="0">
+      <definition automaticDefinition="false" id="3922526355" lineCountMax="5000" schema="xtk:navtree">
+        <where displayFilter="nom est compris dans 'package,sourceFiles' et espace de nommage égal à 'cmaf'">
+          <condition boolOperator="AND" compositeKey="" dependkey="" enabledIf="" expr="@name IN ('package', 'sourceFiles')"/>
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@namespace = 'cmaf'"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="3924033686" lineCountMax="5000" schema="xtk:srcSchema">
+        <where displayFilter="nom est compris dans 'packageSourceRel,specFileMethods,source' et espace de nommage égal à 'cmaf'">
+          <condition boolOperator="AND" compositeKey="" dependkey="" enabledIf="" expr="@name IN ('packageSourceRel', 'specFileMethods', 'source')"/>
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@namespace = 'cmaf'"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="542965951" lineCountMax="5000" schema="xtk:javascript">
+        <where displayFilter="espace de nommage égal à 'cmaf' et nom est compris dans 'packageTools.js,splitPackage.js'">
+          <condition boolOperator="AND" compositeKey="" dependkey="" enabledIf="" expr="@namespace = 'cmaf'"/>
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@name IN ('packageTools.js', 'splitPackage.js')"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="669122760" lineCountMax="5000" schema="xtk:form">
+        <where displayFilter="nom est compris dans 'splitSelectedPackages,source,specFileSources'">
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@name IN ('splitSelectedPackages', 'source', 'specFileSources')"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="3335259501" lineCountMax="5000" schema="xtk:queryFilter">
+        <where displayFilter="type de document égal à 'cmaf:source'">
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@schema = 'cmaf:source'"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="2856321089" lineCountMax="5000" schema="xtk:folder">
+        <where displayFilter="nom interne est compris dans 'cmafSourceFiles'">
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@name IN ('cmafSourceFiles')"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="460260287" lineCountMax="5000" schema="xtk:navtree">
+        <where displayFilter="nom égal à 'sourceFiles'">
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@name = 'sourceFiles'"/>
+        </where>
+      </definition>
+      <definition automaticDefinition="false" id="2812477506" lineCountMax="5000" schema="xtk:sql">
+        <where displayFilter="nom égal à 'purgeSrcRel.sql'">
+          <condition compositeKey="" dependkey="" enabledIf="" expr="@name = 'purgeSrcRel.sql'"/>
+        </where>
+      </definition>
+      <execution fileName="package_cmaf_packages.xml" filePath="D:\appli\Adobe\Adobe Campaign Classic v7\var\DIRCO_MKT_DEV\upload\" fileSize="89031" objectCount="15"/>
+    </specFile>
+  </entities>
+</package>
