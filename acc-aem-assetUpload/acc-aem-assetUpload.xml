@@ -1,0 +1,196 @@
+<?xml version='1.0'?>
+<package author="Administrator (admin)" buildDate="2019-09-24 12:37:04.865Z" buildNumber="8893"
+         buildVersion="6.7" img="xtk:installedPackage.png" label="AEM Asset Upload"
+         name="aemAssetUpload" namespace="acx" vendor="">
+  <entities schema="xtk:javascript">
+    <javascript entitySchema="xtk:javascript" img="xtk:javascript.png" label="aemAssetIntegration.js"
+                name="aemAssetIntegration.js" namespace="acx">
+      <data><![CDATA[loadLibrary("/nl/core/shared/nl.js");
+NL.require('/nl/core/shared/xtk.js')
+  
+var sg_nms_core = new StringGroup('nms:core');  
+var USER_AGENT = "Adobe-Campaign/" + application.buildVersion;
+var AEM_SUCCESSFUL_RESPONSE = "<div id=\"Status\">200</div>"
+var DEBUG = true
+/**
+ * Returning the account username and password for an account
+ * @param  {String} cmsAccountName The external acount referencing the AEM instance
+ */
+function getCmsAccount(cmsAccountName)
+{
+  var cmsAccount = xtk.queryDef.create(
+        <queryDef schema="nms:extAccount" operation="getIfExists">
+          <select>
+            <node expr="@name" alias="name"/>
+            <node expr="@account" alias="account"/>
+            <node expr="@password" alias="password"/>
+            <node expr="@active" alias="active"/>
+            <node expr="@server" alias="server"/>
+          </select>
+          <where>
+            <condition expr={"@name='" + NL.XTK.escape(cmsAccountName) + "'"} />
+          </where>
+        </queryDef>).ExecuteQuery();
+        
+  if (DEBUG) logInfo("cmsAccount:" + cmsAccount.toXMLString())
+  return cmsAccount;
+}
+/**
+ * Returning the authentication header to the given request object
+ * @param  {Object} cmsAccount  The external acount referencing the AEM instance
+ */
+function getAemBasicAuthentication(cmsAccount)
+{
+  var auth 
+  if(cmsAccount)
+  {
+    var buffer = new MemoryBuffer();
+    buffer.fromString(cmsAccount.account + ':' + decryptString(cmsAccount.password), "utf-8");
+    if (DEBUG) logInfo('auth: '+buffer.toString());
+    return "Basic " + buffer.toBase64();
+  }
+}
+/**
+ * Make a synchronous request to create the asset
+ * @param  {String} accountName   The external acount name referencing the AEM instance
+ * @param  {String} path          The path of the content
+ * @param  {String} filename      The external acount name referencing the AEM instance
+ */
+function acx_aemAssetIntegration_UploadAsset(accountName, path, filename)
+{
+  var res = ""
+  if(accountName && path)
+  {
+    // Loading the external account of the AEM instance
+    var cmsAccount = getCmsAccount(String(accountName));
+    // Checking for activated external account
+    if(!cmsAccount.active) {
+      res = sg_nms_core.aemDeactivatedCMSAccount();
+    }
+    else {
+      // Building the URL
+      var url = cmsAccount.server + path;
+      if (DEBUG) logInfo('requesting for link: '+url);
+      
+      // Extracting host from url
+      var host = url.replace('http://','').replace('https://','').split(/[/?#]/)[0];
+      
+      // Adding authentication
+      var auth = getAemBasicAuthentication(cmsAccount);
+  
+      var boundary = digestStrMd5(Math.random());
+     
+      // Creating curl POST command
+      var cmd = "curl -X POST "
+        + url + " "
+        +"-H 'Accept: */*' "
+        +"-H 'Accept-Encoding: gzip, deflate' "
+        +"-H 'Authorization: " + auth + "' "
+        +"-H 'Cache-Control: no-cache' "
+        +"-H 'Connection: keep-alive' "
+        +"-H 'Content-Type: multipart/form-data; boundary=--------------------------" + boundary + "' "
+        +"-H 'Host: " + host + "' "
+        +"-H 'User-Agent: " + USER_AGENT + "' "
+        +"-F 'file=@\"" + filename + "\"' "
+       
+      if (DEBUG) logInfo("acx_aemAssetIntegration_UploadAsset command:" + cmd)
+      
+      res = execCommand(cmd) 
+      
+      if (DEBUG) logInfo("acx_aemAssetIntegration_UploadAsset result:" + res)
+    }
+  }
+  else
+  {
+    if(!accountName) {
+      res = sg_nms_core.aemNoCMSAccount();
+    }
+    if(!path) {
+      res = "No path provided";
+    }
+  }
+  if (DEBUG) logInfo("acx_aemAssetIntegration_UploadAsset:" + res)
+  return res;
+}
+/**
+ * Make a synchronous request to create the asset
+ * @param  {String} accountName The external acount referencing the AEM instance
+ * @param  {String} folderPath  The path of the content
+ */
+function acx_aemAssetIntegration_ActivateReplication(accountName, folderPath)
+{
+  var res = "";
+  if(accountName && folderPath)
+  {
+    // Loading the external account of the AEM instance
+    var cmsAccount = getCmsAccount(String(accountName));
+    // Checking for activated external account
+    if(!cmsAccount.active) {
+      res = sg_nms_core.aemDeactivatedCMSAccount()
+      
+    } else {
+      // Building the URL
+      var url = cmsAccount.server + "/bin/replicate.json";
+      if (DEBUG) logInfo('requesting for link: '+url);
+      
+      // Extracting host from url
+      var host = url.replace('http://','').replace('https://','').split(/[/?#]/)[0];
+      
+      // Adding authentication
+      var auth = getAemBasicAuthentication(cmsAccount);
+  
+      var boundary = digestStrMd5(Math.random());
+     
+      // Creating curl POST command
+      //  curl -u admin:admin -X POST -F path="/content/path/to/page" -F cmd="activate" http://localhost:4502/bin/replicate.json
+      var cmd = "curl -X POST "
+        + url + " "
+        +"-H 'Accept: */*' "
+        +"-H 'Accept-Encoding: gzip, deflate' "
+        +"-H 'Authorization: " + auth + "' "
+        +"-H 'Cache-Control: no-cache' "
+        +"-H 'Connection: keep-alive' "
+        +"-H 'Content-Type: multipart/form-data; boundary=--------------------------" + boundary + "' "
+        +"-H 'Host: " + host + "' "
+        +"-H 'User-Agent: " + USER_AGENT + "' "
+        +"-F path=" + folderPath + " "
+        +"-F cmd=\"activate\" " + url
+   
+      if (DEBUG) logInfo("acx_aemAssetIntegration_ActivateReplication command:" + cmd)
+      
+      res = execCommand(cmd) 
+      
+      if (DEBUG) logInfo("acx_aemAssetIntegration_ActivateReplication result:" + res)
+    }
+  }
+  else
+  {
+    if(!accountName) {
+      res = sg_nms_core.aemNoCMSAccount();
+    }
+    if(!path) {
+      res = "No path provided";
+    }
+  }
+  return res;
+}
+]]></data>
+    </javascript>
+  </entities>
+  <entities schema="xtk:specFile">
+    <specFile img="xtk:installedPackage.png" includeDefaultValues="false" includeInstallScript="false"
+              includeSpec="true" label="AEM Asset Upload" name="aemAssetUpload" namespace="acx"
+              type="0">
+      <definition automaticDefinition="false" id="xtk:javascript,acx,aemAssetIntegration.js"
+                  lineCountMax="5000" schema="xtk:javascript">
+        <where displayFilter="acx:aemAssetIntegration.js">
+          <condition expr="@namespace='acx'" internalId="1"/>
+          <condition expr="@name='aemAssetIntegration.js'" internalId="2"/>
+        </where>
+      </definition>
+      <properties>
+        <progress current="0" max="0"/>
+      </properties>
+    </specFile>
+  </entities>
+</package>
